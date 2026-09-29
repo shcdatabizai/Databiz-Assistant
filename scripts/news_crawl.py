@@ -24,7 +24,10 @@ from __future__ import annotations
 
 import argparse
 import email.utils
+import json
 import os
+import smtplib
+from email.mime.text import MIMEText
 import pathlib
 import re
 import sys
@@ -636,15 +639,16 @@ def run_pipeline(
     date_to: str,
     *,
     week: Optional[str] = None,
+    queries: Optional[list] = None,
     extra_keywords: Optional[list] = None,
     naver_id: str,
     naver_secret: str,
     claude_key: Optional[str],
-) -> dict:
+) -> tuple[dict, list[str]]:
     if week is None:
         week = get_week_label(date_to)
 
-    queries = list(SEARCH_QUERIES)
+    queries = list(queries or SEARCH_QUERIES)
     if extra_keywords:
         for kw in extra_keywords:
             kw = (kw or "").strip()
@@ -682,25 +686,110 @@ def run_pipeline(
     cleanup_old_data()
 
     print(f"=== 완료: {len(picked)}건 Supabase 저장 ===")
-    return meta
+    titles = [str(a.get("title") or "") for a in articles_final]
+    return meta, titles
+
+
+def kst_now() -> datetime:
+    return datetime.utcnow() + timedelta(hours=9)
+
+
+def interval_due(interval: str, now: datetime) -> bool:
+    if interval in ("daily", "after_crawl"):
+        return True
+    if interval == "weekly":
+        return now.weekday() == 0
+    if interval == "monthly":
+        return now.day == 1
+    return True
+
+
+def load_crawl_settings() -> dict:
+    defaults = {
+        "keywords": list(SEARCH_QUERIES),
+        "collectInterval": "weekly",
+        "collectDays": COLLECT_DAYS,
+        "emailInterval": "weekly",
+        "recipientEmails": [],
+    }
+    raw = resolve_api_key("NEWS_CRAWL_SETTINGS")
+    if not raw:
+        return defaults
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        print("[설정] 저장된 뉴스 설정을 읽지 못해 기본값을 사용합니다.")
+        return defaults
+
+    keywords = [str(k).strip() for k in (data.get("keywords") or []) if str(k).strip()]
+    emails = [str(e).strip() for e in (data.get("recipientEmails") or []) if "@" in str(e)]
+    try:
+        days = int(data.get("collectDays") or COLLECT_DAYS)
+    except (TypeError, ValueError):
+        days = COLLECT_DAYS
+    collect_interval = data.get("collectInterval") if data.get("collectInterval") in ("daily", "weekly", "monthly") else "weekly"
+    email_interval = data.get("emailInterval") if data.get("emailInterval") in ("off", "after_crawl", "daily", "weekly") else "weekly"
+    return {
+        "keywords": keywords or defaults["keywords"],
+        "collectInterval": collect_interval,
+        "collectDays": min(90, max(1, days)),
+        "emailInterval": email_interval,
+        "recipientEmails": emails,
+    }
+
+
+def send_news_email(recipients: list[str], titles: list[str], date_from: str, date_to: str) -> None:
+    username = resolve_api_key("SMTP_USERNAME")
+    password = resolve_api_key("SMTP_PASSWORD")
+    if not username or not password:
+        print("[메일] SMTP 계정이 없어 발송을 건너뜁니다.")
+        return
+
+    lines = [f"수집 기간: {date_from} ~ {date_to}", f"기사 {len(titles)}건", ""]
+    lines.extend(f"- {title}" for title in titles[:30] if title)
+    if len(titles) > 30:
+        lines.append(f"... 외 {len(titles) - 30}건")
+    message = MIMEText("\n".join(lines), "plain", "utf-8")
+    message["Subject"] = f"데이터뉴스 수집 결과 ({date_to})"
+    message["From"] = username
+    message["To"] = ", ".join(recipients)
+
+    server = os.environ.get("SMTP_SERVER", "smtp.gmail.com")
+    port = int(os.environ.get("SMTP_PORT", "587"))
+    try:
+        with smtplib.SMTP(server, port, timeout=30) as smtp:
+            smtp.starttls()
+            smtp.login(username, password.replace(" ", ""))
+            smtp.sendmail(username, recipients, message.as_string())
+        print(f"[메일] {len(recipients)}명에게 발송했습니다.")
+    except Exception as exc:
+        print(f"[메일 실패] {exc}")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="데이터뉴스 수집 파이프라인")
-    parser.add_argument("--days", type=int, default=COLLECT_DAYS, help="오늘 기준 수집 기간(일)")
+    parser.add_argument("--days", type=int, default=None, help="오늘 기준 수집 기간(일). 없으면 관리자 설정값")
     parser.add_argument("--date-from", default=None, help="YYYY-MM-DD (지정 시 --days 무시)")
     parser.add_argument("--date-to", default=None, help="YYYY-MM-DD")
     parser.add_argument("--extra", default="", help="추가 검색 키워드 (쉼표로 구분)")
+    parser.add_argument("--force", action="store_true", help="수집 주기와 관계없이 실행")
     args = parser.parse_args()
 
     if not SUPABASE_URL or not SUPABASE_KEY:
         print("[오류] NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SECRET_KEY 환경변수가 필요합니다.")
         sys.exit(1)
 
+    settings = load_crawl_settings()
+    now = kst_now()
+    if not args.force and not (args.date_from and args.date_to):
+        if not interval_due(settings["collectInterval"], now):
+            print(f"[건너뜀] 오늘은 수집 주기({settings['collectInterval']})가 아닙니다.")
+            return
+
     if args.date_from and args.date_to:
         date_from, date_to = args.date_from, args.date_to
     else:
-        date_from, date_to = get_week_range(args.days)
+        date_from, date_to = get_week_range(args.days if args.days is not None else settings["collectDays"])
     week = get_week_label(date_to)
     extra_keywords = [k.strip() for k in args.extra.split(",") if k.strip()] if args.extra else None
 
@@ -715,15 +804,26 @@ def main() -> None:
     if not claude_key:
         print("[안내] ANTHROPIC_API_KEY가 없어 Claude 요약 없이 진행합니다 (네이버 snippet만 사용).")
 
-    run_pipeline(
+    _meta, titles = run_pipeline(
         date_from,
         date_to,
         week=week,
+        queries=settings["keywords"],
         extra_keywords=extra_keywords,
         naver_id=naver_id,
         naver_secret=naver_secret,
         claude_key=claude_key,
     )
+
+    email_interval = settings["emailInterval"]
+    recipients = settings["recipientEmails"]
+    should_email = bool(recipients) and email_interval != "off" and (
+        args.force or email_interval == "after_crawl" or interval_due(email_interval, now)
+    )
+    if should_email:
+        send_news_email(recipients, titles, date_from, date_to)
+    elif email_interval == "off":
+        print("[메일] 발송 주기가 사용 안 함이라 건너뜁니다.")
 
 
 if __name__ == "__main__":
