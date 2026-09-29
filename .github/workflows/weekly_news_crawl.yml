@@ -1,0 +1,54 @@
+# =============================================================
+# weekly_news_crawl.yml — 데이터뉴스(기능3) 주간 자동 수집
+# 매주 일요일 UTC 22:00 (= 월요일 KST 07:00) 실행
+# workflow_dispatch로 수동 즉시 실행도 가능 (관리자 페이지에서 트리거)
+#
+# 결과는 git에 커밋하지 않고 Supabase(news_weeks/news_articles)에 바로 저장합니다.
+# NAVER_CLIENT_ID/SECRET, ANTHROPIC_API_KEY는 /admin/api-keys에 등록된 값을
+# 스크립트가 Supabase에서 직접 조회 + 복호화해서 사용하므로 여기 secrets로 넣지 않습니다.
+# =============================================================
+
+name: Weekly Data News Crawl
+
+on:
+  schedule:
+    - cron: '0 22 * * 0'
+  workflow_dispatch:
+    inputs:
+      days:
+        description: '오늘 기준 수집 기간(일)'
+        required: false
+        default: '7'
+      extra_keywords:
+        description: '추가 검색 키워드 (쉼표 구분, 예: 축제,이벤트)'
+        required: false
+        default: ''
+
+jobs:
+  crawl-and-save:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 코드 체크아웃
+        uses: actions/checkout@v4
+
+      - name: Python 설정
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 의존성 설치
+        run: pip install -r scripts/requirements.txt
+
+      - name: 뉴스 수집 실행
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          API_KEY_ENCRYPTION_SECRET: ${{ secrets.API_KEY_ENCRYPTION_SECRET }}
+        run: |
+          ARGS="--days ${{ github.event.inputs.days || '7' }}"
+          EXTRA_KW="${{ github.event.inputs.extra_keywords }}"
+          if [ -n "$EXTRA_KW" ]; then
+            ARGS="$ARGS --extra $EXTRA_KW"
+          fi
+          python scripts/news_crawl.py $ARGS
