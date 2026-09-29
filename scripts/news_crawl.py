@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import email.utils
+import html
 import json
 import os
 import smtplib
@@ -155,7 +156,8 @@ def _strip_html_tags(text: str) -> str:
     if not text:
         return ""
     text = text.replace("\ufeff", "")
-    return re.sub(r"<[^>]+>", "", text)
+    text = re.sub(r"<[^>]+>", "", text)
+    return html.unescape(text).strip()
 
 
 def _parse_pubdate_to_date(pubdate: str) -> Optional[date]:
@@ -644,7 +646,7 @@ def run_pipeline(
     naver_id: str,
     naver_secret: str,
     claude_key: Optional[str],
-) -> tuple[dict, list[str]]:
+) -> tuple[dict, list[str], list]:
     if week is None:
         week = get_week_label(date_to)
 
@@ -687,7 +689,7 @@ def run_pipeline(
 
     print(f"=== 완료: {len(picked)}건 Supabase 저장 ===")
     titles = [str(a.get("title") or "") for a in articles_final]
-    return meta, titles
+    return meta, titles, articles_final
 
 
 def kst_now() -> datetime:
@@ -766,6 +768,54 @@ def send_news_email(recipients: list[str], titles: list[str], date_from: str, da
         print(f"[메일 실패] {exc}")
 
 
+def notify_personal_watches(articles: list, now: datetime, date_from: str, date_to: str) -> None:
+    """자동 수집이 켜진 회원의 키워드에 걸린 기사를, 설정한 주기로 메일 발송합니다."""
+    try:
+        resp = requests.get(
+            f"{SUPABASE_URL}/rest/v1/user_news_watch",
+            headers=_supabase_headers(),
+            params={"select": "user_id,keyword,company_name"},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        rows = resp.json() or []
+    except Exception as exc:
+        print(f"[개인알림] 설정을 읽지 못했습니다: {exc}")
+        return
+
+    grouped: dict[str, list] = {}
+    for row in rows:
+        grouped.setdefault(row.get("user_id") or "", []).append(row)
+
+    for items in grouped.values():
+        settings_row = next((row for row in items if row.get("keyword") == "__settings__"), None)
+        if not settings_row:
+            continue
+        try:
+            settings = json.loads(settings_row.get("company_name") or "{}")
+        except json.JSONDecodeError:
+            continue
+        if not settings.get("autoCollect"):
+            continue
+        interval = settings.get("interval") if settings.get("interval") in ("daily", "weekly") else "weekly"
+        if not interval_due(interval, now):
+            continue
+        terms = [
+            str(row.get("keyword") or row.get("company_name") or "").strip().lower()
+            for row in items
+            if row.get("keyword") != "__settings__"
+        ]
+        terms = [term for term in terms if term]
+        matched = []
+        for article in articles:
+            haystack = f"{article.get('title') or ''} {' '.join(article.get('keywords') or [])}".lower()
+            if any(term in haystack for term in terms):
+                matched.append(str(article.get("title") or ""))
+        email = str(settings.get("email") or "").strip()
+        if settings.get("autoEmail") and "@" in email and matched:
+            send_news_email([email], matched, date_from, date_to)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="데이터뉴스 수집 파이프라인")
     parser.add_argument("--days", type=int, default=None, help="오늘 기준 수집 기간(일). 없으면 관리자 설정값")
@@ -804,7 +854,7 @@ def main() -> None:
     if not claude_key:
         print("[안내] ANTHROPIC_API_KEY가 없어 Claude 요약 없이 진행합니다 (네이버 snippet만 사용).")
 
-    _meta, titles = run_pipeline(
+    _meta, titles, articles_final = run_pipeline(
         date_from,
         date_to,
         week=week,
@@ -824,6 +874,7 @@ def main() -> None:
         send_news_email(recipients, titles, date_from, date_to)
     elif email_interval == "off":
         print("[메일] 발송 주기가 사용 안 함이라 건너뜁니다.")
+    notify_personal_watches(articles_final, now, date_from, date_to)
 
 
 if __name__ == "__main__":
