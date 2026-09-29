@@ -1,0 +1,38 @@
+# 월별 소비데이터 parquet을 Google Drive에서 읽어 report_agent 대시보드 집계를 저장합니다.
+name: Monthly Dashboard Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      year_month:
+        description: "기준년월 YYYYMM"
+        required: true
+        type: string
+      drive_file_id:
+        description: "Google Drive 파일 ID"
+        required: true
+        type: string
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 코드 체크아웃
+        uses: actions/checkout@v4
+
+      - name: Python 설정
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 의존성 설치
+        run: pip install -r scripts/dashboard_requirements.txt
+
+      - name: 대시보드 집계
+        env:
+          YEAR_MONTH: ${{ inputs.year_month }}
+          DRIVE_FILE_ID: ${{ inputs.drive_file_id }}
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          API_KEY_ENCRYPTION_SECRET: ${{ secrets.API_KEY_ENCRYPTION_SECRET }}
+        run: python scripts/build_dashboard.py

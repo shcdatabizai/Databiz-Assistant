@@ -1,7 +1,40 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
+import { resolveApiKey } from "@/lib/apiKeys";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { extractDriveFileId } from "@/lib/googleDrive";
+
+const WORKFLOW_FILE = "dashboard_build.yml";
+
+async function dispatchDashboardBuild(userId: string, yearMonth: string, fileId: string) {
+  const token = await resolveApiKey("GITHUB_PAT", userId);
+  const repo = await resolveApiKey("GITHUB_REPO", userId);
+  if (!token || !repo || !repo.includes("/")) {
+    return "파일은 저장됐지만 GitHub 실행 정보가 없어 집계를 시작하지 못했습니다.";
+  }
+
+  const ghRes = await fetch(
+    `https://api.github.com/repos/${repo}/actions/workflows/${WORKFLOW_FILE}/dispatches`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        ref: "main",
+        inputs: { year_month: yearMonth, drive_file_id: fileId },
+      }),
+    }
+  );
+  if (!ghRes.ok && ghRes.status !== 204) {
+    const text = await ghRes.text().catch(() => "");
+    return `파일은 저장됐지만 집계 요청에 실패했습니다. ${ghRes.status} ${text}`.slice(0, 400);
+  }
+  return null;
+}
 
 export async function GET() {
   const user = await getCurrentUser();
@@ -60,9 +93,14 @@ export async function POST(request: Request) {
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  // TODO(기능4): 서비스 계정으로 Drive에서 parquet을 다운로드해 dashboard_generator.py
-  // 집계 로직을 실행하고 dashboard_monthly_metrics에 결과를 저장하는 처리 파이프라인은
-  // 별도 작업으로 이어서 구현합니다. 지금은 메타데이터 등록까지만 수행합니다.
+  const dispatchError = await dispatchDashboardBuild(user.id, yearMonth, fileId);
+  if (dispatchError) {
+    return NextResponse.json({ ok: true, fileId, warning: dispatchError });
+  }
 
-  return NextResponse.json({ ok: true, fileId });
+  return NextResponse.json({
+    ok: true,
+    fileId,
+    message: "원본을 등록하고 대시보드 집계 실행을 요청했습니다.",
+  });
 }
