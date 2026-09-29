@@ -99,17 +99,39 @@ def patch_upload(year_month: str, body: dict) -> None:
         raise RuntimeError(f"업로드 상태 저장 실패 {res.status_code}: {res.text[:300]}")
 
 
+def json_safe(value):
+    """NaN/Infinity와 numpy 스칼라는 Supabase JSON에 넣을 수 없습니다."""
+    if isinstance(value, dict):
+        return {str(key): json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [json_safe(item) for item in value]
+    if isinstance(value, bool) or value is None or isinstance(value, (str, int)):
+        return value
+    if isinstance(value, float):
+        if value != value or value in (float("inf"), float("-inf")):
+            return None
+        return value
+    if hasattr(value, "item"):
+        try:
+            return json_safe(value.item())
+        except Exception:
+            return None
+    return value
+
+
 def save_metrics(year_month: str, payload: dict, row_count: int) -> None:
     res = requests.post(
         f"{SUPABASE_URL}/rest/v1/dashboard_monthly_metrics",
         headers={**_headers(), "Prefer": "resolution=merge-duplicates,return=minimal"},
         params={"on_conflict": "year_month"},
-        json={
-            "year_month": year_month,
-            "payload": payload,
-            "row_count": row_count,
-            "computed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        },
+        json=json_safe(
+            {
+                "year_month": year_month,
+                "payload": payload,
+                "row_count": row_count,
+                "computed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            }
+        ),
         timeout=60,
     )
     if res.status_code >= 400:
