@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { decryptSecret } from "@/lib/crypto";
-import { API_KEY_DEFS } from "@/lib/apiKeyDefs";
+import { STORED_KEY_DEFS } from "@/lib/apiKeyDefs";
 
 /**
  * 화면에는 절대 표시하지 않고, 클립보드 복사 용도로만 평문 값을 반환합니다.
@@ -14,7 +14,7 @@ export async function GET(request: Request) {
   }
 
   const key = new URL(request.url).searchParams.get("key");
-  if (!key || !API_KEY_DEFS.some((d) => d.key === key)) {
+  if (!key || !STORED_KEY_DEFS.some((d) => d.key === key)) {
     return NextResponse.json({ error: `알 수 없는 키: ${key}` }, { status: 400 });
   }
 

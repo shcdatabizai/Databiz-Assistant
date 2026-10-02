@@ -1,7 +1,10 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
+import { ChevronLeft, ChevronRight } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { createClient } from "@/lib/supabase/client";
 import { MiniPopover } from "@/components/biz/MiniPopover";
 
@@ -65,7 +68,7 @@ function FieldGroup({ title, fields, sel, setSel }: { title: string; fields: { v
           <input type="checkbox" checked={sel.length === fields.length} onChange={(e) => setSel(e.target.checked ? fields.map((f) => f.value) : [])} style={{ marginRight: 4 }} />전체 선택
         </label>
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
         {fields.map((f) => (
           <label key={f.value} style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: "0.8rem" }}>
             <input type="checkbox" checked={sel.includes(f.value)} onChange={() => toggleField(sel, f.value, setSel)} />{f.label}
@@ -320,58 +323,86 @@ function DetailContent({ record }: { record: any }) {
 
   return (
     <div style={{ padding: 12, background: "#f5f5f4", borderTop: "1px solid #ebe9f1" }}>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gridTemplateRows: "auto 1fr", gap: 8, minHeight: 180 }}>
-        <div style={{ gridColumn: 1, gridRow: 1 }}><SourceBlock title="Bizno API">{biznoBlock()}</SourceBlock></div>
-        <div style={{ gridColumn: 2, gridRow: "1 / 3" }}><SourceBlock title="통신판매업">{govBlock()}</SourceBlock></div>
-        <div style={{ gridColumn: 1, gridRow: 2 }}><SourceBlock title="Bizno 크롤링">{crawlBlock()}</SourceBlock></div>
-        <div style={{ gridColumn: 3, gridRow: "1 / 3" }}><SourceBlock title="가맹사업정보">{ftcBlock()}</SourceBlock></div>
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+        <SourceBlock title="Bizno API">{biznoBlock()}</SourceBlock>
+        <SourceBlock title="Bizno 크롤링">{crawlBlock()}</SourceBlock>
+        <SourceBlock title="통신판매업">{govBlock()}</SourceBlock>
+        <SourceBlock title="가맹사업정보">{ftcBlock()}</SourceBlock>
       </div>
     </div>
   );
 }
 
-function StatusDropdown({ statuses, onChange }: { statuses: string[]; onChange: (s: string[]) => void }) {
+const STATUS_OPTIONS = ["오류", "조회됨", "없음"];
+
+function ColumnStatusFilter({
+  label,
+  statuses,
+  onChange,
+}: {
+  label: string;
+  statuses: string[];
+  onChange: (s: string[]) => void;
+}) {
   const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  const options = ["오류", "조회됨", "없음"];
+  const [pos, setPos] = useState({ top: 0, left: 0 });
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const h = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
-    document.addEventListener("mousedown", h);
-    return () => document.removeEventListener("mousedown", h);
-  }, []);
+    if (!open) return;
+    const close = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (btnRef.current?.contains(target) || menuRef.current?.contains(target)) return;
+      setOpen(false);
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [open]);
 
-  const toggle = (v: string) => onChange(statuses.includes(v) ? statuses.filter((s) => s !== v) : [...statuses, v]);
-  const label = statuses.length === 0 ? "모두" : `${statuses.length}개 선택`;
+  const toggle = (value: string) => onChange(statuses.includes(value) ? statuses.filter((s) => s !== value) : [...statuses, value]);
 
   return (
-    <div ref={ref} style={{ position: "relative" }}>
-      <button onClick={() => setOpen((o) => !o)} style={{
-        background: "#fff", color: "#1a1a24", border: "1px solid #ebe9f1", borderRadius: 6,
-        padding: "8px 12px", fontSize: "0.875rem", height: 38, cursor: "pointer",
-        display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap", width: "100%",
-      }}>
-        <span>{label}</span><span style={{ fontSize: "0.65rem", opacity: 0.6, marginLeft: "auto" }}>▼</span>
+    <>
+      <button
+        ref={btnRef}
+        type="button"
+        onClick={() => {
+          const rect = btnRef.current?.getBoundingClientRect();
+          if (rect) setPos({ top: rect.bottom + 6, left: Math.max(8, Math.min(rect.left, window.innerWidth - 168)) });
+          setOpen((current) => !current);
+        }}
+        style={{
+          border: "none", background: "transparent", padding: 0, cursor: "pointer",
+          fontWeight: 600, fontSize: "0.8125rem", color: statuses.length ? ACCENT : "#8b8b94",
+          display: "inline-flex", alignItems: "center", gap: 4,
+        }}
+      >
+        {label}
+        {statuses.length > 0 ? <span style={{ fontSize: "0.65rem" }}>({statuses.length})</span> : null}
       </button>
-      {open && (
-        <div style={{
-          position: "absolute", top: "100%", left: 0, background: "#fff",
-          border: "1px solid #ebe9f1", borderRadius: 8, boxShadow: "0 8px 24px rgba(0,0,0,0.12)",
-          zIndex: 200, minWidth: 140, marginTop: 6,
-        }}>
-          {options.map((opt) => (
-            <label key={opt} onClick={(e) => e.stopPropagation()} style={{
-              display: "flex", alignItems: "center", padding: "10px 16px",
-              cursor: "pointer", fontSize: "0.875rem",
+      {open && createPortal(
+        <div
+          ref={menuRef}
+          style={{
+            position: "fixed", top: pos.top, left: pos.left, zIndex: 80, minWidth: 148,
+            background: "#fff", border: "1px solid #ebe9f1", borderRadius: 8,
+            boxShadow: "0 8px 24px rgba(0,0,0,0.12)",
+          }}
+        >
+          {STATUS_OPTIONS.map((opt) => (
+            <label key={opt} style={{
+              display: "flex", alignItems: "center", padding: "10px 14px", cursor: "pointer", fontSize: "0.875rem",
               background: statuses.includes(opt) ? "#eef3ff" : "transparent",
             }}>
               <input type="checkbox" checked={statuses.includes(opt)} onChange={() => toggle(opt)} style={{ marginRight: 8 }} />
               {opt}
             </label>
           ))}
-        </div>
+        </div>,
+        document.body
       )}
-    </div>
+    </>
   );
 }
 
@@ -494,7 +525,7 @@ function DataModal({ records, userId, onClose }: { records: any[]; userId: strin
         </div>
         <div style={{ marginBottom: 24, paddingBottom: 24, borderBottom: "1px solid #ebe9f1" }}>
           <label style={{ fontWeight: 600, fontSize: "0.875rem", display: "block", marginBottom: 12 }}>업종매핑 결과</label>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             {MAPPING_FIELDS.map((f) => (
               <label key={f.value} style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: "0.8rem" }}>
                 <input type="checkbox" checked={mappingSel.includes(f.value)} onChange={() => toggleField(mappingSel, f.value, setMappingSel)} />{f.label}
@@ -619,12 +650,14 @@ export default function BizLookupHistoryPage() {
     setCurrentPage(1);
   };
 
-  const handleBiznoSt = (s: string[]) => { setBiznoSt(s); setDisplayRecords(filterRecords(allRecords, { ...currentFilterParams(), biznoSt: s })); };
-  const handleCrawlSt = (s: string[]) => { setCrawlSt(s); setDisplayRecords(filterRecords(allRecords, { ...currentFilterParams(), crawlSt: s })); };
-  const handleGovSt = (s: string[]) => { setGovSt(s); setDisplayRecords(filterRecords(allRecords, { ...currentFilterParams(), govSt: s })); };
-  const handleFtcSt = (s: string[]) => { setFtcSt(s); setDisplayRecords(filterRecords(allRecords, { ...currentFilterParams(), ftcSt: s })); };
-  const handleMctCode = (v: string) => { setFilterMctCode(v); setDisplayRecords(filterRecords(allRecords, { ...currentFilterParams(), mctCode: v })); };
-  const handleHpsnCode = (v: string) => { setFilterHpsnCode(v); setDisplayRecords(filterRecords(allRecords, { ...currentFilterParams(), hpsnCode: v })); };
+  const applyStatus = (patch: Partial<FilterParams>) => {
+    setDisplayRecords(filterRecords(allRecords, { ...currentFilterParams(), ...patch }));
+    setCurrentPage(1);
+  };
+  const handleBiznoSt = (s: string[]) => { setBiznoSt(s); applyStatus({ biznoSt: s }); };
+  const handleCrawlSt = (s: string[]) => { setCrawlSt(s); applyStatus({ crawlSt: s }); };
+  const handleGovSt = (s: string[]) => { setGovSt(s); applyStatus({ govSt: s }); };
+  const handleFtcSt = (s: string[]) => { setFtcSt(s); applyStatus({ ftcSt: s }); };
 
   const handleTodayOnly = (checked: boolean) => {
     setTodayOnly(checked);
@@ -699,18 +732,6 @@ export default function BizLookupHistoryPage() {
     } catch { alert("삭제 중 오류 발생"); }
   };
 
-  const deleteOld = async () => {
-    if (!window.confirm("3개월 이상 경과한 모든 기록을 삭제하시겠습니까?")) return;
-    try {
-      const data = await (await fetch("/api/biz/history", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "delete-old", days: 90 }),
-      })).json();
-      if (data.success) { alert(data.message); loadHistory(); }
-      else alert("삭제 실패: " + (data.error || "알 수 없는 오류"));
-    } catch { alert("삭제 중 오류 발생"); }
-  };
-
   const saveMapping = async (recordId: number, type: string, code: string, name: string) => {
     try {
       const data = await (await fetch("/api/biz/update-mapping", {
@@ -753,85 +774,59 @@ export default function BizLookupHistoryPage() {
 
   return (
     <div className="mx-auto w-full max-w-6xl min-w-0 px-4 py-8 sm:py-12">
-      <div className="mb-4 flex items-start justify-between gap-3">
+      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-xl sm:text-[1.5rem] font-bold m-0">조회이력</h1>
+          <h1 className="m-0 flex items-center gap-2 text-xl font-bold sm:text-[1.5rem]">
+            <Button
+              variant="ghost"
+              size="icon"
+              nativeButton={false}
+              render={<Link href="/biz-lookup" aria-label="조회하기로 돌아가기" />}
+            >
+              <ChevronLeft />
+            </Button>
+            조회이력
+          </h1>
           <p className="text-xs sm:text-sm text-black/50 mt-1">
             최근 3개월 이내 조회 기록 · 동일 번호는 캐시된 결과를 재사용합니다
           </p>
         </div>
-        <Link href="/biz-lookup" className="rounded-lg border border-black/10 px-3 py-2 text-sm font-medium text-black/60 hover:bg-black/5 whitespace-nowrap">
-          ← 조회하기
-        </Link>
       </div>
 
-      <div style={{ background: "#fff", border: "1px solid #ebe9f1", borderRadius: 10, padding: 16, marginBottom: 16 }}>
-        <div style={{ fontSize: "0.9375rem", fontWeight: 700, marginBottom: 12 }}>검색</div>
-        <div style={{
-          display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))",
-          gap: "8px 20px", padding: 16, background: "#f5f5f4", borderRadius: 8, marginBottom: 12, alignItems: "center",
-        }}>
+      <div className="mb-4 rounded-[10px] border border-[#ebe9f1] bg-white p-4">
+        <div className="mb-3 text-[0.9375rem] font-bold">검색</div>
+        <div className="mb-3 grid grid-cols-1 gap-3 rounded-lg bg-[#f5f5f4] p-3 sm:grid-cols-2 sm:p-4">
           {[
             { label: "사업자번호", val: filterBrno, set: setFilterBrno, ph: "사업자번호" },
             { label: "상호명", val: filterCompany, set: setFilterCompany, ph: "상호명" },
           ].map(({ label, val, set, ph }) => (
-            <div key={label} style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-              <label style={{ width: 92, flexShrink: 0, fontSize: "0.8125rem", fontWeight: 600 }}>{label}</label>
+            <label key={label} className="flex min-w-0 flex-col gap-1 sm:flex-row sm:items-center sm:gap-2">
+              <span className="shrink-0 text-[0.8125rem] font-semibold sm:w-24">{label}</span>
               <input value={val} onChange={(e) => set(e.target.value)} onKeyDown={(e) => e.key === "Enter" && doFilter()} placeholder={ph}
-                style={{ flex: 1, minWidth: 0, padding: "8px 10px", border: "1px solid #ebe9f1", borderRadius: 6, fontSize: "0.875rem", height: 38, background: "#fff" }} />
-            </div>
-          ))}
-          <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0, gridColumn: "span 2" }}>
-            <label style={{ width: 92, flexShrink: 0, fontSize: "0.8125rem", fontWeight: 600 }}>조회기간</label>
-            <input type="date" value={filterDateFrom} onChange={(e) => { setFilterDateFrom(e.target.value); setTodayOnly(false); }}
-              style={{ flex: 1, minWidth: 0, padding: "8px 10px", border: "1px solid #ebe9f1", borderRadius: 6, fontSize: "0.875rem", height: 38, background: "#fff" }} />
-            <span style={{ color: "#8b8b94" }}>~</span>
-            <input type="date" value={filterDateTo} onChange={(e) => { setFilterDateTo(e.target.value); setTodayOnly(false); }}
-              style={{ flex: 1, minWidth: 0, padding: "8px 10px", border: "1px solid #ebe9f1", borderRadius: 6, fontSize: "0.875rem", height: 38, background: "#fff" }} />
-            <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: "0.75rem", whiteSpace: "nowrap", cursor: "pointer" }}>
-              <input type="checkbox" checked={todayOnly} onChange={(e) => handleTodayOnly(e.target.checked)} />
-              당일만
+                className="box-border h-11 min-h-11 min-w-0 flex-1 rounded-md border border-[#ebe9f1] bg-white px-2.5 text-sm" />
             </label>
+          ))}
+          <div className="flex min-w-0 flex-col gap-2 sm:col-span-2 sm:flex-row sm:items-center">
+            <span className="shrink-0 text-[0.8125rem] font-semibold sm:w-24">조회기간</span>
+            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+              <input type="date" value={filterDateFrom} onChange={(e) => { setFilterDateFrom(e.target.value); setTodayOnly(false); }}
+                className="box-border h-11 min-h-11 min-w-0 flex-1 basis-32 rounded-md border border-[#ebe9f1] bg-white px-2.5 text-sm" />
+              <span className="text-[#8b8b94]">~</span>
+              <input type="date" value={filterDateTo} onChange={(e) => { setFilterDateTo(e.target.value); setTodayOnly(false); }}
+                className="box-border h-11 min-h-11 min-w-0 flex-1 basis-32 rounded-md border border-[#ebe9f1] bg-white px-2.5 text-sm" />
+              <label className="flex cursor-pointer items-center gap-1 whitespace-nowrap text-xs">
+                <input type="checkbox" checked={todayOnly} onChange={(e) => handleTodayOnly(e.target.checked)} />
+                당일만
+              </label>
+            </div>
           </div>
-          {[
-            { label: "Bizno API", st: biznoSt, h: handleBiznoSt },
-            { label: "Bizno 크롤링", st: crawlSt, h: handleCrawlSt },
-            { label: "통신판매업", st: govSt, h: handleGovSt },
-            { label: "가맹사업", st: ftcSt, h: handleFtcSt },
-          ].map(({ label, st, h }) => (
-            <div key={label} style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-              <label style={{ width: 92, flexShrink: 0, fontSize: "0.8125rem", fontWeight: 600 }}>{label}</label>
-              <div style={{ flex: 1, minWidth: 0 }}><StatusDropdown statuses={st} onChange={h} /></div>
-            </div>
-          ))}
-          {[
-            { label: "가맹점업종", value: filterMctCode, h: handleMctCode, opts: categories.mct_ry_cd },
-            { label: "초개인화업종", value: filterHpsnCode, h: handleHpsnCode, opts: categories.hpsn_mct_zcd },
-          ].map(({ label, value, h, opts }) => (
-            <div key={label} style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-              <label style={{ width: 92, flexShrink: 0, fontSize: "0.8125rem", fontWeight: 600 }}>{label}</label>
-              <select value={value} onChange={(e) => h(e.target.value)}
-                style={{ flex: 1, minWidth: 0, padding: "8px 10px", border: "1px solid #ebe9f1", borderRadius: 6, fontSize: "0.875rem", height: 38, background: "#fff" }}>
-                <option value="">전체</option>
-                <option value={UNMATCHED}>없음 (매칭 안 됨)</option>
-                {Object.entries(opts).sort((a, b) => a[0].localeCompare(b[0])).map(([code, name]) => (
-                  <option key={code} value={code}>{code} - {name}</option>
-                ))}
-              </select>
-            </div>
-          ))}
         </div>
-        <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", flexWrap: "wrap" }}>
+        <div className="flex flex-wrap justify-end gap-1.5">
           <button onClick={doFilter} style={{ ...btnH38, background: ACCENT, color: "#fff" }}>검색</button>
           <button onClick={doReset} style={{ ...btnH38, background: "#e5e5e4", color: "#1a1a24" }}>초기화</button>
-        </div>
-        <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", flexWrap: "wrap", marginTop: 8 }}>
           <button onClick={() => { if (!allRecords.length) { alert("조회 결과가 없습니다."); return; } setShowDataModal(true); }}
             style={{ ...btnH38, background: ACCENT, color: "#fff" }}>
             ⬇ 자료받기
-          </button>
-          <button onClick={deleteOld} style={{ ...btnH38, background: "#dc2626", color: "#fff" }}>
-            3개월 경과건 일괄 삭제
           </button>
         </div>
       </div>
@@ -858,8 +853,8 @@ export default function BizLookupHistoryPage() {
         {loading ? (
           <div style={{ textAlign: "center", color: "#8b8b94", padding: 24 }}>로딩 중...</div>
         ) : (
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.8125rem", background: "#fff", border: "1px solid #ebe9f1", borderRadius: 10, overflow: "hidden" }}>
+          <div className="max-w-full overflow-x-auto">
+            <table style={{ width: "100%", minWidth: 880, borderCollapse: "collapse", fontSize: "0.8125rem", background: "#fff", border: "1px solid #ebe9f1", borderRadius: 10 }}>
               <thead style={{ background: "#f5f5f4", borderBottom: "1px solid #ebe9f1" }}>
                 <tr>
                   <th style={{ ...thStyle, width: 30 }}>
@@ -868,11 +863,30 @@ export default function BizLookupHistoryPage() {
                       onChange={toggleSelectAll} style={{ width: 16, height: 16, cursor: "pointer" }} />
                   </th>
                   <th style={{ ...thStyle, width: 40, textAlign: "center" }}>No</th>
-                  {columns.map(({ col, label }) => (
-                    <th key={col} style={{ ...thStyle, cursor: "pointer" }} onClick={() => doSort(col)}>
-                      <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>{label} {sortIcon(col)}</span>
-                    </th>
-                  ))}
+                  {columns.map(({ col, label }) => {
+                    const statusFilter = {
+                      bizno_status: { statuses: biznoSt, onChange: handleBiznoSt },
+                      crawl_status: { statuses: crawlSt, onChange: handleCrawlSt },
+                      gov_status: { statuses: govSt, onChange: handleGovSt },
+                      ftc_status: { statuses: ftcSt, onChange: handleFtcSt },
+                    }[col];
+                    return (
+                      <th key={col} style={thStyle}>
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                          {statusFilter ? (
+                            <ColumnStatusFilter label={label} statuses={statusFilter.statuses} onChange={statusFilter.onChange} />
+                          ) : (
+                            <button type="button" onClick={() => doSort(col)} style={{ border: "none", background: "transparent", padding: 0, cursor: "pointer", fontWeight: 600, fontSize: "0.8125rem", color: "#8b8b94" }}>
+                              {label}
+                            </button>
+                          )}
+                          <button type="button" onClick={() => doSort(col)} aria-label={`${label} 정렬`} style={{ border: "none", background: "transparent", padding: 0, cursor: "pointer", lineHeight: 1 }}>
+                            {sortIcon(col)}
+                          </button>
+                        </span>
+                      </th>
+                    );
+                  })}
                   <th style={{ ...thStyle, width: 80 }}></th>
                 </tr>
               </thead>
@@ -961,13 +975,9 @@ export default function BizLookupHistoryPage() {
               if (i > 0 && typeof arr[i - 1] === "number" && (p as number) - (arr[i - 1] as number) > 1) acc.push("...");
               acc.push(p); return acc;
             }, []);
-          const navBtn = (disabled: boolean): React.CSSProperties => ({
-            padding: "4px 10px", border: "1px solid #ebe9f1", borderRadius: 6, background: "#fff",
-            cursor: disabled ? "default" : "pointer", opacity: disabled ? 0.4 : 1, fontSize: "0.8125rem", height: 32,
-          });
           return (
-            <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 6, marginTop: 16 }}>
-              <button onClick={() => setCurrentPage((p) => Math.max(1, p - 1))} disabled={currentPage === 1} style={navBtn(currentPage === 1)}>&lt;</button>
+            <div className="mt-4 flex flex-wrap items-center justify-center gap-1.5">
+              <Button type="button" variant="outline" size="icon" onClick={() => setCurrentPage((p) => Math.max(1, p - 1))} disabled={currentPage === 1} aria-label="이전 페이지"><ChevronLeft /></Button>
               {pages.map((p, i) => p === "..."
                 ? <span key={`ellipsis-${i}`} style={{ padding: "0 4px", color: "#8b8b94" }}>…</span>
                 : <button key={p} onClick={() => setCurrentPage(p as number)}
@@ -975,7 +985,7 @@ export default function BizLookupHistoryPage() {
                     {p}
                   </button>
               )}
-              <button onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))} disabled={currentPage === totalPages} style={navBtn(currentPage === totalPages)}>&gt;</button>
+              <Button type="button" variant="outline" size="icon" onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))} disabled={currentPage === totalPages} aria-label="다음 페이지"><ChevronRight /></Button>
             </div>
           );
         })()}

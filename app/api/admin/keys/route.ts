@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { encryptSecret, decryptSecret, maskSecret } from "@/lib/crypto";
-import { API_KEY_DEFS } from "@/lib/apiKeyDefs";
+import { API_KEY_DEFS, STORED_KEY_DEFS } from "@/lib/apiKeyDefs";
 
 async function requireAdmin() {
   const user = await getCurrentUser();
@@ -37,11 +37,27 @@ export async function GET() {
         masked = "••••(복호화 실패)";
       }
     }
+    let serviceAccount: { fileName: string | null; clientEmail: string | null } | null = null;
+    if (def.key === "GOOGLE_SERVICE_ACCOUNT_JSON" && row) {
+      try {
+        const parsed = JSON.parse(decryptSecret(row.key_value_encrypted)) as {
+          client_email?: string;
+          _uploadedFileName?: string;
+        };
+        serviceAccount = {
+          fileName: parsed._uploadedFileName ?? null,
+          clientEmail: parsed.client_email ?? null,
+        };
+      } catch {
+        serviceAccount = { fileName: null, clientEmail: null };
+      }
+    }
     return {
       ...def,
       hasValue: !!row,
       masked,
       updatedAt: row?.updated_at ?? null,
+      serviceAccount,
     };
   });
 
@@ -55,13 +71,13 @@ export async function POST(request: Request) {
   }
 
   const body = await request.json();
-  const { key, value } = body as { key?: string; value?: string };
+  const { key, value, fileName } = body as { key?: string; value?: string; fileName?: string };
 
   if (!key || typeof value !== "string") {
     return NextResponse.json({ error: "key, value가 필요합니다." }, { status: 400 });
   }
 
-  const def = API_KEY_DEFS.find((d) => d.key === key);
+  const def = STORED_KEY_DEFS.find((d) => d.key === key);
   if (!def) {
     return NextResponse.json({ error: `알 수 없는 키: ${key}` }, { status: 400 });
   }
@@ -74,7 +90,31 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true, deleted: true });
   }
 
-  const encrypted = encryptSecret(value.trim());
+  let stored = value.trim().replace(/^\uFEFF/, "");
+  if (key === "GOOGLE_SERVICE_ACCOUNT_JSON") {
+    let parsed: { client_email?: string; private_key?: string };
+    try {
+      parsed = JSON.parse(stored);
+    } catch {
+      return NextResponse.json(
+        { error: "JSON 파일을 읽지 못했습니다. 서비스 계정 키 파일인지 확인해주세요." },
+        { status: 400 }
+      );
+    }
+    if (!parsed.client_email || !parsed.private_key) {
+      return NextResponse.json(
+        { error: "서비스 계정 JSON에 client_email 또는 private_key가 없습니다." },
+        { status: 400 }
+      );
+    }
+    const uploadedName = typeof fileName === "string" ? fileName.trim() : "";
+    stored = JSON.stringify({
+      ...parsed,
+      ...(uploadedName ? { _uploadedFileName: uploadedName } : {}),
+    });
+  }
+
+  const encrypted = encryptSecret(stored);
   const { error } = await admin.from("admin_api_keys").upsert({
     key_name: key,
     key_value_encrypted: encrypted,
@@ -87,5 +127,14 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  return NextResponse.json({ ok: true, masked: maskSecret(value.trim()) });
+  let serviceAccount: { fileName: string | null; clientEmail: string | null } | null = null;
+  if (key === "GOOGLE_SERVICE_ACCOUNT_JSON") {
+    const parsed = JSON.parse(stored) as { client_email?: string; _uploadedFileName?: string };
+    serviceAccount = {
+      fileName: parsed._uploadedFileName ?? null,
+      clientEmail: parsed.client_email ?? null,
+    };
+  }
+
+  return NextResponse.json({ ok: true, masked: maskSecret(stored), serviceAccount });
 }

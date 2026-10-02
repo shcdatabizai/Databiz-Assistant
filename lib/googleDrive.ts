@@ -82,6 +82,76 @@ async function getServiceAccountAccessToken(
   return body.access_token as string;
 }
 
+export interface DriveEntry {
+  id: string;
+  name: string;
+  mimeType: string;
+  size: number | null;
+}
+
+const FOLDER_MIME = "application/vnd.google-apps.folder";
+
+async function listDriveQuery(accessToken: string, query: string): Promise<DriveEntry[]> {
+  const items: DriveEntry[] = [];
+  let pageToken = "";
+  for (let page = 0; page < 5; page += 1) {
+    const url = new URL("https://www.googleapis.com/drive/v3/files");
+    url.searchParams.set("q", query);
+    url.searchParams.set("pageSize", "100");
+    url.searchParams.set("fields", "nextPageToken,files(id,name,mimeType,size)");
+    url.searchParams.set("supportsAllDrives", "true");
+    url.searchParams.set("includeItemsFromAllDrives", "true");
+    if (pageToken) url.searchParams.set("pageToken", pageToken);
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      cache: "no-store",
+    });
+    const body = await res.json();
+    if (!res.ok) {
+      throw new Error(`Google Drive 목록 조회 실패 (${res.status}): ${JSON.stringify(body).slice(0, 300)}`);
+    }
+    for (const file of body.files ?? []) {
+      items.push({
+        id: String(file.id),
+        name: String(file.name ?? ""),
+        mimeType: String(file.mimeType ?? ""),
+        size: file.size ? Number(file.size) : null,
+      });
+    }
+    pageToken = body.nextPageToken ?? "";
+    if (!pageToken) break;
+  }
+  return items.sort((a, b) => a.name.localeCompare(b.name, "ko"));
+}
+
+/** 서비스 계정에 공유된 폴더와 parquet/csv 파일 목록입니다. folderId가 있으면 그 폴더 안만 봅니다. */
+export async function listSharedDrive(serviceAccountJsonRaw: string, folderId?: string) {
+  if (folderId && !/^[a-zA-Z0-9_-]+$/.test(folderId)) {
+    throw new Error("폴더 ID 형식이 올바르지 않습니다.");
+  }
+  const accessToken = await getServiceAccountAccessToken(serviceAccountJsonRaw);
+  const dataFile =
+    "(name contains '.parquet' or name contains '.csv' or name contains '.PARQUET' or name contains '.CSV')";
+  const [folders, files] = await Promise.all([
+    listDriveQuery(accessToken, `trashed = false and mimeType = '${FOLDER_MIME}'`),
+    listDriveQuery(
+      accessToken,
+      folderId
+        ? `'${folderId}' in parents and trashed = false and ${dataFile}`
+        : `trashed = false and mimeType != '${FOLDER_MIME}' and ${dataFile}`
+    ),
+  ]);
+  return { folders, files };
+}
+
+/** 화면에서 고른 파일 ID 또는 기존 공유 링크에서 파일 ID를 확정합니다. */
+export function resolveSubmittedFileId(fileId?: string, driveLink?: string): string | null {
+  const direct = fileId?.trim() ?? "";
+  if (/^[a-zA-Z0-9_-]{20,}$/.test(direct)) return direct;
+  if (driveLink) return extractDriveFileId(driveLink);
+  return null;
+}
+
 /**
  * 서비스 계정 권한으로 Google Drive 파일을 다운로드합니다.
  * 대상 파일/폴더는 서비스 계정 이메일(client_email)과 "뷰어"로 공유되어 있어야 합니다.

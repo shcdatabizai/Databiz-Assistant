@@ -249,6 +249,25 @@ comment on table public.kosis_shc_uploads is
   '신한카드 원본(월별 대분류/중분류/소분류별 취급액) parquet 메타데이터. 실제 파일은 Google Drive, 서버가 다운로드해 집계 후 kosis_shc_monthly에 반영.';
 
 -- ---------------------------------------------------------
+-- 7-2) kosis_shc_points — 화면이 읽는 월별 비교값 (한 달 = 한 행)
+-- ---------------------------------------------------------
+create table if not exists public.kosis_shc_points (
+  year_month text primary key,
+  series jsonb not null,
+  demo jsonb,
+  updated_at timestamptz not null default timezone('utc', now())
+);
+
+alter table public.kosis_shc_points enable row level security;
+
+drop policy if exists kosis_shc_points_select on public.kosis_shc_points;
+create policy kosis_shc_points_select on public.kosis_shc_points
+  for select to authenticated using (true);
+
+comment on table public.kosis_shc_points is
+  '업종별 신한카드·통계청 값과 인구 구성비를 월 1행으로 저장. 정합성 화면은 이 표만 읽습니다.';
+
+-- ---------------------------------------------------------
 -- 8) dashboard_monthly_uploads / dashboard_monthly_metrics — 기능4 월별업종별 현황
 -- ---------------------------------------------------------
 create table if not exists public.dashboard_monthly_uploads (

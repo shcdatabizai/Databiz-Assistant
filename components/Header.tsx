@@ -1,6 +1,5 @@
 "use client";
 
-import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -62,17 +61,14 @@ export default function Header() {
   return (
     <header className="sticky top-0 z-50 border-b border-black/5 bg-white/90 backdrop-blur">
       <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-4 sm:px-6">
-        <Link href="/" className="flex items-center gap-2" onClick={() => setOpen(false)}>
-          <Image
+        <Link href="/" className="flex min-w-0 items-center gap-2" onClick={() => setOpen(false)}>
+          <img
             src="/brand/logo/logo-kr-horizontal-blue.png"
             alt="신한카드"
-            width={140}
-            height={37}
-            priority
-            className="h-7 w-auto sm:h-8"
+            className="h-6 w-auto shrink-0 sm:h-8"
           />
-          <span className="hidden border-l border-black/10 pl-2 text-sm font-medium text-black/60 sm:inline">
-            데이터사업 업무지원센터
+          <span className="whitespace-nowrap border-l border-black/10 pl-2 text-sm font-medium text-black/70 sm:text-base">
+            데이터사업 업무지원
           </span>
         </Link>
 

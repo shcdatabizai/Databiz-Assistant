@@ -12,9 +12,11 @@ import { Card, CardContent } from "@/components/ui/card";
 function initialOAuthError(): string | null {
   if (typeof window === "undefined") return null;
   const params = new URLSearchParams(window.location.search);
-  return params.get("error") === "google_login_failed"
-    ? "Google 로그인에 실패했습니다. 다시 시도해주세요."
-    : null;
+  if (params.get("error") !== "google_login_failed") return null;
+  const reason = params.get("reason");
+  return reason
+    ? `Google 로그인에 실패했습니다. ${reason}`
+    : "Google 로그인에 실패했습니다. 다시 시도해주세요.";
 }
 
 export default function LoginPage() {
@@ -49,12 +51,12 @@ export default function LoginPage() {
     <div className="mx-auto flex max-w-sm flex-col gap-6 px-4 py-16 sm:py-24">
       <div className="text-center">
         <h1 className="text-xl font-bold text-foreground">로그인</h1>
-        <p className="mt-1 text-sm text-black/55">데이터사업 업무지원센터 계정으로 로그인하세요.</p>
+        <p className="mt-1 text-sm text-black/55">데이터사업 업무지원 계정으로 로그인하세요.</p>
       </div>
 
       <Card>
         <CardContent className="flex flex-col gap-6 pt-6">
-          <GoogleAuthButton label="Google 계정으로 로그인" />
+          <GoogleAuthButton intent="login" />
 
           <div className="flex items-center gap-3">
             <div className="h-px flex-1 bg-black/10" />

@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { resolveApiKey } from "@/lib/apiKeys";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { extractDriveFileId } from "@/lib/googleDrive";
+import { resolveSubmittedFileId } from "@/lib/googleDrive";
 
 const WORKFLOW_FILE = "dashboard_build.yml";
 
@@ -58,25 +58,20 @@ export async function POST(request: Request) {
   }
 
   const body = await request.json();
-  const { yearMonth, driveLink, fileName } = body as {
+  const { yearMonth, driveLink, fileId: submittedFileId, fileName } = body as {
     yearMonth?: string;
     driveLink?: string;
+    fileId?: string;
     fileName?: string;
   };
 
   if (!yearMonth || !/^\d{6}$/.test(yearMonth)) {
     return NextResponse.json({ error: "yearMonth은 YYYYMM 6자리 형식이어야 합니다." }, { status: 400 });
   }
-  if (!driveLink) {
-    return NextResponse.json({ error: "driveLink가 필요합니다." }, { status: 400 });
-  }
 
-  const fileId = extractDriveFileId(driveLink);
+  const fileId = resolveSubmittedFileId(submittedFileId, driveLink);
   if (!fileId) {
-    return NextResponse.json(
-      { error: "Google Drive 링크에서 파일 ID를 찾을 수 없습니다. 공유링크를 다시 확인해주세요." },
-      { status: 400 }
-    );
+    return NextResponse.json({ error: "Drive에서 추가할 파일을 선택해주세요." }, { status: 400 });
   }
 
   const admin = createAdminClient();
@@ -84,7 +79,7 @@ export async function POST(request: Request) {
     year_month: yearMonth,
     drive_file_id: fileId,
     drive_file_name: fileName ?? null,
-    drive_link: driveLink,
+    drive_link: driveLink ?? `https://drive.google.com/file/d/${fileId}/view`,
     uploaded_by: user.id,
     uploaded_at: new Date().toISOString(),
     status: "registered",

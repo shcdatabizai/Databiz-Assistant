@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { decodeHtmlText } from "@/lib/htmlText";
 
 const PAGE_SIZE = 30;
 
@@ -23,7 +24,7 @@ export async function GET(request: Request) {
   let query = admin
     .from("news_articles")
     .select(
-      "id, week, article_date, source, source_tier, title, summary_snippet, summary_claude, keywords, url, score",
+      "id, week, article_date, source, source_tier, title, summary_snippet, summary_claude, keywords, url, score, search_query",
       { count: "exact" }
     )
     .order("article_date", { ascending: false })
@@ -40,9 +41,16 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: articlesError.message }, { status: 500 });
   }
 
+  const decoded = (articles ?? []).map((article) => ({
+    ...article,
+    title: decodeHtmlText(article.title),
+    summary_snippet: decodeHtmlText(article.summary_snippet),
+    summary_claude: decodeHtmlText(article.summary_claude),
+  }));
+
   return NextResponse.json({
     weeks: weeks ?? [],
-    articles: articles ?? [],
+    articles: decoded,
     total: count ?? 0,
     page,
     pageSize: PAGE_SIZE,

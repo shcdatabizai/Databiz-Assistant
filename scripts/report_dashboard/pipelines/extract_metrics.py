@@ -20,6 +20,95 @@ def _safe_float(v):
         return None
 
 
+def _ukw(value):
+    number = _safe_float(value)
+    return int(round(number / 1e8)) if number is not None else 0
+
+
+def _cross_series(frame, label_col, labels):
+    lookup = {}
+    for _, row in frame.iterrows():
+        lookup[str(row[label_col])] = row
+    current, prev, yoy = [], [], []
+    for label in labels:
+        row = lookup.get(str(label))
+        if row is None:
+            current.append(0)
+            prev.append(0)
+            yoy.append(0)
+            continue
+        current.append(_ukw(row["est_amt"]))
+        prev.append(_ukw(row["est_amt_bf"]))
+        yoy.append(dg.safe_val(row["yoy_amt_pct"]) or 0)
+    return {"labels": [str(label) for label in labels], "current": current, "prev": prev, "yoy": yoy}
+
+
+def _industry_cross(df, by_ry, by_wdn):
+    """업종별 화면용. 업로드 집계 때 한 번만 만들고, 페이지는 이 숫자만 읽는다."""
+    week_labels = [dg._default_wdn_label(str(value)) for value in by_wdn["wdn"].tolist()]
+    by_ry_wdn = dg.agg_by(df, ["ry_nm", "wdn"])
+    age_base = df.assign(_age10=df["age_gp"].map(dg.AGE10_MAP))
+    age_base = age_base[age_base["_age10"].notna()]
+    by_ry_age = dg.agg_by(age_base, ["ry_nm", "_age10"]) if len(age_base) else pd.DataFrame(columns=["ry_nm", "_age10", "est_amt"])
+    sex_base = age_base[age_base["sex_ccd"].isin(["M", "F"])] if len(age_base) else age_base
+    by_ry_age_sex = dg.agg_by(sex_base, ["ry_nm", "_age10", "sex_ccd"]) if len(sex_base) else pd.DataFrame(columns=["ry_nm", "_age10", "sex_ccd", "est_amt"])
+    region_base = df[df["cty_nm"] != "미확인"]
+    by_ry_cty = dg.agg_by(region_base, ["ry_nm", "cty_nm"]) if len(region_base) else pd.DataFrame(columns=["ry_nm", "cty_nm", "est_amt"])
+    by_ry_tm = dg.agg_by(df, ["ry_nm", "trns_tm_gp"])
+    zeros = {"labels": list(dg.AGE10_ORDER), "current": [0] * len(dg.AGE10_ORDER), "prev": [0] * len(dg.AGE10_ORDER), "yoy": [0] * len(dg.AGE10_ORDER)}
+
+    def _time_label(value):
+        text = str(value)
+        return text.split("_", 1)[1] if "_" in text else text
+
+    def _part(frame, name):
+        if frame is None or len(frame) == 0 or "ry_nm" not in frame.columns:
+            return frame.iloc[0:0] if frame is not None else pd.DataFrame()
+        return frame[frame["ry_nm"].astype(str) == name]
+
+    items = {}
+    for _, row in by_ry.iterrows():
+        name = str(row["ry_nm"])
+        weeks = _part(by_ry_wdn, name).copy()
+        if len(weeks):
+            weeks["_label"] = weeks["wdn"].map(lambda value: dg._default_wdn_label(str(value)))
+        ages = _part(by_ry_age, name)
+        sex_rows = _part(by_ry_age_sex, name)
+        males = sex_rows[sex_rows["sex_ccd"].astype(str) == "M"] if len(sex_rows) and "sex_ccd" in sex_rows.columns else sex_rows.iloc[0:0]
+        females = sex_rows[sex_rows["sex_ccd"].astype(str) == "F"] if len(sex_rows) and "sex_ccd" in sex_rows.columns else sex_rows.iloc[0:0]
+        regions = _part(by_ry_cty, name)
+        times = _part(by_ry_tm, name).copy()
+        if len(times):
+            times["_label"] = times["trns_tm_gp"].map(_time_label)
+        time_order = [str(value) for value in times.sort_values("trns_tm_gp")["_label"].tolist()] if len(times) else []
+        region_order = [str(value) for value in regions.sort_values("est_amt", ascending=False)["cty_nm"].tolist()] if len(regions) else []
+        atv = _safe_float(row.get("atv"))
+        atv_bf = _safe_float(row.get("atv_bf"))
+        items[name] = {
+            "kpi": {
+                "total_amt": _ukw(row["est_amt"]),
+                "total_amt_bf": _ukw(row["est_amt_bf"]),
+                "yoy_amt": dg.safe_val(row["yoy_amt_pct"]) or 0,
+                "total_cnt": round((_safe_float(row["est_cnt"]) or 0) / 1e4, 2),
+                "total_cnt_bf": round((_safe_float(row["est_cnt_bf"]) or 0) / 1e4, 2),
+                "yoy_cnt": dg.safe_val(row["yoy_cnt_pct"]) or 0,
+                "atv": int(round(atv)) if atv is not None else None,
+                "atv_bf": int(round(atv_bf)) if atv_bf is not None else None,
+                "yoy_atv": dg.safe_val(row.get("yoy_atv_pct")),
+            },
+            "wdn": _cross_series(weeks, "_label", week_labels) if len(weeks) else {"labels": week_labels, "current": [0] * len(week_labels), "prev": [0] * len(week_labels), "yoy": [0] * len(week_labels)},
+            "age": _cross_series(ages, "_age10", dg.AGE10_ORDER) if len(ages) else zeros,
+            "age_sex": {
+                "labels": list(dg.AGE10_ORDER),
+                "male": _cross_series(males, "_age10", dg.AGE10_ORDER),
+                "female": _cross_series(females, "_age10", dg.AGE10_ORDER),
+            },
+            "cty": _cross_series(regions, "cty_nm", region_order),
+            "tm": _cross_series(times, "_label", time_order) if len(times) else {"labels": [], "current": [], "prev": [], "yoy": []},
+        }
+    return items
+
+
 def _top_changes(df, label_col, metric_col, top_n=5, ascending=False):
     ordered = df.sort_values(metric_col, ascending=ascending).head(top_n)
     rows = []
@@ -728,6 +817,7 @@ def build_report_payload():
 
     dashboard = {
         "kpi": kpi_dash,
+        "industry_cross": _industry_cross(df, by_ry, by_wdn),
         "ry": ry_dash,
         "cty": cty_dash,
         "wdn": wdn_dash,

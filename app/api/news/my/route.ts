@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { decodeHtmlText } from "@/lib/htmlText";
+import { MY_NEWS_SETTINGS_KEY, parseMyNewsSettings } from "@/lib/myNews";
+import { resolvePress } from "@/lib/newsPress";
 
 const RECENT_ARTICLE_LIMIT = 300;
 
@@ -21,14 +24,23 @@ export async function GET() {
     return NextResponse.json({ error: watchError.message }, { status: 500 });
   }
 
-  if (!watchItems || watchItems.length === 0) {
-    return NextResponse.json({ articles: [], watchCount: 0 });
+  const settingsRow = (watchItems ?? []).find((row) => row.keyword === MY_NEWS_SETTINGS_KEY);
+  const settings = parseMyNewsSettings(settingsRow?.company_name);
+  const watchTerms: string[] = [];
+  const seenTerms = new Set<string>();
+  for (const row of watchItems ?? []) {
+    if (row.keyword === MY_NEWS_SETTINGS_KEY) continue;
+    const label = (row.keyword || row.company_name || "").trim();
+    const key = label.toLowerCase();
+    if (!label || seenTerms.has(key)) continue;
+    seenTerms.add(key);
+    watchTerms.push(label);
   }
+  const terms = watchTerms.map((term) => term.toLowerCase());
 
-  const terms = watchItems
-    .flatMap((w) => [w.keyword, w.company_name])
-    .filter((v): v is string => !!v && v.trim().length > 0)
-    .map((v) => v.trim().toLowerCase());
+  if (terms.length === 0) {
+    return NextResponse.json({ articles: [], watchCount: 0, watchTerms, settings });
+  }
 
   const { data: articles, error: articlesError } = await admin
     .from("news_articles")
@@ -44,9 +56,24 @@ export async function GET() {
     .map((article) => {
       const haystack = [article.title, ...(article.keywords ?? [])].join(" ").toLowerCase();
       const matchedTerms = terms.filter((t) => haystack.includes(t));
-      return matchedTerms.length > 0 ? { ...article, matchedTerms } : null;
+      if (matchedTerms.length === 0) return null;
+      const press = resolvePress([article.url || ""], article.source || "");
+      return {
+        ...article,
+        title: decodeHtmlText(article.title),
+        source: press.source || article.source,
+        source_tier: article.source_tier && article.source_tier !== "unknown" ? article.source_tier : press.source_tier,
+        summary_snippet: decodeHtmlText(article.summary_snippet),
+        summary_claude: decodeHtmlText(article.summary_claude),
+        matchedTerms,
+      };
     })
     .filter((a): a is NonNullable<typeof a> => a !== null);
 
-  return NextResponse.json({ articles: matched, watchCount: watchItems.length });
+  return NextResponse.json({
+    articles: matched,
+    watchCount: terms.length,
+    watchTerms,
+    settings,
+  });
 }

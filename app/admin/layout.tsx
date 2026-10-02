@@ -6,7 +6,9 @@ import { Card, CardContent } from "@/components/ui/card";
 const ADMIN_NAV = [
   { href: "/admin", label: "개요" },
   { href: "/admin/api-keys", label: "API 키 관리" },
+  { href: "/admin/news", label: "뉴스 수집" },
   { href: "/admin/data", label: "데이터 업로드" },
+  { href: "/admin/favorites", label: "즐겨찾기" },
 ];
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
@@ -65,7 +67,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
       <h1 className="mb-1 text-xl font-bold text-foreground">관리자</h1>
       <p className="mb-6 text-sm text-black/50">{user.displayName ?? user.email}님, 환영합니다.</p>
 
-      <nav className="mb-8 flex gap-1 border-b border-black/5">
+      <nav className="mb-8 flex flex-wrap gap-1 border-b border-black/5">
         {ADMIN_NAV.map((item) => (
           <Link
             key={item.href}

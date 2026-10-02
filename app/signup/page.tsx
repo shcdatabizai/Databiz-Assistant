@@ -63,7 +63,7 @@ export default function SignupPage() {
 
       <Card>
         <CardContent className="flex flex-col gap-6 pt-6">
-          <GoogleAuthButton label="Google 계정으로 가입하기" />
+          <GoogleAuthButton intent="signup" />
 
           <div className="flex items-center gap-3">
             <div className="h-px flex-1 bg-black/10" />

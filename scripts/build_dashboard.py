@@ -222,6 +222,14 @@ def ui_payload(report: dict) -> dict:
         "연령": _series(age.get("labels10"), age.get("current10"), age.get("prev10"), age.get("yoy10")),
         "지역 유입": flows,
         "업종 상위": _series(ry.get("amt_labels"), ry.get("amt_current"), ry.get("amt_prev"), ry.get("yoy_vals")),
+        "공휴일": [
+            {
+                "주차": str(week.get("wdn") or ""),
+                "당월": week.get("cur_holidays") or [],
+                "전년": week.get("prev_holidays") or [],
+            }
+            for week in (meta.get("holiday_weeks") or [])
+        ],
         "_dashboard": dash,
     }
 
